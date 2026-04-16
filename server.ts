@@ -512,28 +512,32 @@ async function startServer() {
 startServer();
 
 // --- BOT SIMULATION SYSTEM ---
-const BOT_IDS = ["bot_1", "bot_2", "bot_3", "bot_4", "bot_5"];
+const BOT_TELEGRAM_IDS = ["bot_1", "bot_2", "bot_3", "bot_4", "bot_5"];
 const BOT_NAMES = ["CryptoKing", "TON_Warrior", "LuckyGarf", "AlphaDegen", "SwiftWhale"];
+let botDbIds: string[] = [];
 
 async function initializeBots(io: any) {
   console.log("Initializing Bots...");
-  for (let i = 0; i < BOT_IDS.length; i++) {
-      await prisma.user.upsert({
-      where: { telegramId: BOT_IDS[i] },
+  botDbIds = [];
+  for (let i = 0; i < BOT_TELEGRAM_IDS.length; i++) {
+      const user = await prisma.user.upsert({
+      where: { telegramId: BOT_TELEGRAM_IDS[i] },
       update: {},
       create: {
-        telegramId: BOT_IDS[i],
+        telegramId: BOT_TELEGRAM_IDS[i],
         username: BOT_NAMES[i],
         firstName: BOT_NAMES[i],
         mainBalance: 1000,
       }
     });
+    botDbIds.push(user.id);
   }
 
   // Create bot challenges periodically (every 2.5 minutes)
   cron.schedule("*/2 * * * *", async () => {
-    const randomBotIdx = Math.floor(Math.random() * BOT_IDS.length);
-    const botId = BOT_IDS[randomBotIdx];
+    if (botDbIds.length === 0) return;
+    const randomBotIdx = Math.floor(Math.random() * botDbIds.length);
+    const botId = botDbIds[randomBotIdx];
     const types = ["COIN_FLIP", "DICE"];
     const type = types[Math.floor(Math.random() * types.length)];
     const bets = [0.1, 0.2, 0.5, 1];
@@ -562,10 +566,11 @@ async function initializeBots(io: any) {
 
   // Bots join human games if they wait too long
   cron.schedule("*/1 * * * *", async () => {
+    if (botDbIds.length === 0) return;
     const openGames = await prisma.game.findMany({
       where: { 
         status: "OPEN",
-        participants: { none: { userId: { in: BOT_IDS } } } // Only join human games
+        participants: { none: { userId: { in: botDbIds } } } // Only join human games
       },
       include: { participants: { include: { user: true } } }
     });
@@ -573,7 +578,7 @@ async function initializeBots(io: any) {
     if (openGames.length > 0) {
       // Pick one game and join it with a bot
       const game = openGames[Math.floor(Math.random() * openGames.length)];
-      const botId = BOT_IDS[Math.floor(Math.random() * BOT_IDS.length)];
+      const botId = botDbIds[Math.floor(Math.random() * botDbIds.length)];
       
       const totalPot = game.pot * 2;
       const fee = totalPot * 0.05;

@@ -1,0 +1,160 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id                 String        @id @default(cuid())
+  telegramId         String        @unique
+  username           String?
+  firstName          String?
+  lastName           String?
+  avatarUrl          String?
+  mainBalance        Float         @default(0)
+  bonusBalance       Float         @default(0)
+  wageringRemaining  Float         @default(0)
+  totalDeposit       Float         @default(0)
+  lastClaim          DateTime?
+  currentStreak      Int           @default(0)
+  ticketsBalance     Int           @default(0)
+  activeVoucher      String?
+  totalBets          Int           @default(0)
+  totalWins          Int           @default(0)
+  tournamentPoints   Int           @default(0)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  
+  depositAddress     String?       @unique  // Alamat TON pengguna yang terdaftar (untuk withdraw)
+  
+  withdrawals        Withdrawal[]
+  transactions       Transaction[]
+  gameParticipations GameParticipant[]
+  soloGames          SoloGame[]
+  tournamentEntries  TournamentParticipant[]
+  scans              DepositScan[]
+}
+
+model Withdrawal {
+  id          String   @id @default(cuid())
+  userId      String
+  amount      Float
+  toAddress   String
+  txHash      String?
+  status      String   @default("pending") // pending, processing, completed, failed
+  createdAt   DateTime @default(now())
+  processedAt DateTime?
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   // "deposit", "withdrawal", "game_win", "game_loss", "chest_bonus", "referral", "BET", "WIN"
+  amount      Float
+  balanceType String   @default("main") // "main" atau "bonus"
+  reference   String?  // Reference ID (Game, TxHash, etc.)
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+model DepositScan {
+  id             String   @id @default(cuid())
+  txHash         String   @unique  // Hash transaksi on-chain
+  fromAddress    String   // Alamat pengirim
+  toAddress      String   // Alamat merchant
+  amount         Float    // Jumlah TON yang diterima
+  comment        String?  // Pesan yang disertakan (untuk identifikasi user)
+  userId         String?  // Diisi setelah teridentifikasi
+  status         String   @default("pending") // pending, credited, ignored
+  scannedAt      DateTime @default(now())
+  creditedAt     DateTime?
+  user           User?    @relation(fields: [userId], references: [id])
+}
+
+model Game {
+  id          String   @id @default(uuid())
+  type        String   // COIN_FLIP, DICE, POKER
+  status      String   // OPEN, IN_PROGRESS, COMPLETED, CANCELLED
+  pot         Float    @default(0)
+  fee         Float    @default(0)
+  details     String?  // JSON string storing game-specific settings/history
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  participants GameParticipant[]
+}
+
+model GameParticipant {
+  id          String   @id @default(uuid())
+  gameId      String
+  userId      String
+  bet         Float
+  currencyType String   @default("MAIN")
+  choice      String?  // HEAD, TAIL, 1-6 (Dice)
+  result      String?  // WON, LOST, TIE
+  payout      Float    @default(0)
+  createdAt   DateTime @default(now())
+  
+  game        Game     @relation(fields: [gameId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
+  
+  @@unique([gameId, userId])
+}
+
+model SoloGame {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String   // SCRATCH, RED_BLACK, HIGHER_LOWER
+  bet         Float
+  payout      Float
+  resultState String?  // JSON string of seeds, selections, and outcomes
+  createdAt   DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+model Tournament {
+  id          String   @id @default(uuid())
+  startTime   DateTime
+  status      String   // UPCOMING, REGISTRATION, IN_PROGRESS, COMPLETED
+  entryFee    Float    @default(2)
+  prizePool   Float    @default(0)
+  winnerId    String?
+  createdAt   DateTime @default(now())
+  
+  participants TournamentParticipant[]
+  matches      TournamentMatch[]
+}
+
+model TournamentParticipant {
+  id            String     @id @default(uuid())
+  tournamentId  String
+  userId        String
+  bracketPos    Int?
+  eliminatedAt  Int?       // Round number (1, 2, 3...)
+  pointsEarned  Int        @default(0)
+  
+  tournament    Tournament @relation(fields: [tournamentId], references: [id])
+  user          User       @relation(fields: [userId], references: [id])
+  
+  @@unique([tournamentId, userId])
+}
+
+model TournamentMatch {
+  id            String     @id @default(uuid())
+  tournamentId  String
+  round         Int        // 1 (32->16), 2 (16->8), etc
+  position      Int        // index in the round
+  player1Id     String?
+  player2Id     String?
+  winnerId      String?
+  resultState   String?    // JSON results
+  
+  tournament    Tournament @relation(fields: [tournamentId], references: [id])
+}

@@ -985,6 +985,8 @@ function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
+  const [error, setError] = useState<string | null>(null);
+
   const fetchWithAuth = async (url: string, options: any = {}) => {
     return fetch(url, {
       ...options,
@@ -1002,28 +1004,42 @@ function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
 
   const refreshData = async () => {
     setLoading(true);
+    setError(null);
     try {
+      let res;
       if (activeTab === 'STATS') {
-        const res = await fetchWithAuth(`${API_URL}/api/admin/stats`);
-        setStats(await res.json());
+        res = await fetchWithAuth(`${API_URL}/api/admin/stats`);
       } else if (activeTab === 'USERS') {
-        const res = await fetchWithAuth(`${API_URL}/api/admin/users?search=${searchTerm}`);
-        setUsers(await res.json());
+        res = await fetchWithAuth(`${API_URL}/api/admin/users?search=${searchTerm}`);
       } else if (activeTab === 'WITHDRAWS') {
-        const res = await fetchWithAuth(`${API_URL}/api/admin/withdrawals`);
-        setWithdrawals(await res.json());
+        res = await fetchWithAuth(`${API_URL}/api/admin/withdrawals`);
       } else if (activeTab === 'DEPOSITS') {
-        const res = await fetchWithAuth(`${API_URL}/api/admin/deposits`);
-        setDeposits(await res.json());
+        res = await fetchWithAuth(`${API_URL}/api/admin/deposits`);
       } else if (activeTab === 'LOGS') {
-        const res = await fetchWithAuth(`${API_URL}/api/admin/logs`);
-        setLogs(await res.json());
+        res = await fetchWithAuth(`${API_URL}/api/admin/logs`);
       } else if (activeTab === 'SETTINGS') {
-        const res = await fetchWithAuth(`${API_URL}/api/admin/settings`);
-        setSettings(await res.json());
+        res = await fetchWithAuth(`${API_URL}/api/admin/settings`);
       }
-    } catch (e) {
+
+      if (res && !res.ok) {
+        if (res.status === 403) {
+          throw new Error("Akses Ditolak: ID Telegram kamu belum terdaftar sebagai Admin di server.");
+        }
+        throw new Error(`Error ${res.status}: Gagal mengambil data.`);
+      }
+
+      if (res) {
+        const data = await res.json();
+        if (activeTab === 'STATS') setStats(data);
+        else if (activeTab === 'USERS') setUsers(data);
+        else if (activeTab === 'WITHDRAWS') setWithdrawals(data);
+        else if (activeTab === 'DEPOSITS') setDeposits(data);
+        else if (activeTab === 'LOGS') setLogs(data);
+        else if (activeTab === 'SETTINGS') setSettings(data);
+      }
+    } catch (e: any) {
       console.error(e);
+      setError(e.message || "Terdapat kesalahan saat mengambil data.");
     } finally {
       setLoading(false);
     }
@@ -1109,7 +1125,30 @@ function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
       </header>
 
       <main className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-        {activeTab === 'STATS' && stats && (
+        {loading && (
+          <div className="flex flex-col items-center justify-center p-20 gap-3 opacity-60">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-red-500"></div>
+            <div className="text-xs font-mono">Loading data...</div>
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-2xl flex flex-col items-center text-center gap-4">
+            <AlertCircle className="text-red-500" size={48} />
+            <div>
+              <div className="font-bold text-red-500 mb-1">Terjadi Kesalahan</div>
+              <div className="text-xs text-red-200/60 leading-relaxed font-mono">{error}</div>
+            </div>
+            <button 
+              onClick={refreshData}
+              className="px-6 py-2 bg-red-500 rounded-xl text-xs font-bold hover:bg-red-600 transition-all"
+            >
+              COBA LAGI
+            </button>
+          </div>
+        )}
+
+        {!loading && !error && activeTab === 'STATS' && stats && (
           <div className="grid grid-cols-2 gap-4">
             {[
               { label: 'Total Users', value: stats.totalUsers, icon: Users, color: 'text-blue-400' },
@@ -1127,7 +1166,7 @@ function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
           </div>
         )}
 
-        {activeTab === 'USERS' && (
+        {!loading && !error && activeTab === 'USERS' && (
           <div className="space-y-4">
             <div className="flex gap-2">
               <input 
@@ -1159,7 +1198,7 @@ function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
           </div>
         )}
 
-        {activeTab === 'WITHDRAWS' && (
+        {!loading && !error && activeTab === 'WITHDRAWS' && (
           <div className="space-y-2">
             {withdrawals.map(w => (
               <div key={w.id} className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
@@ -1184,7 +1223,7 @@ function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
           </div>
         )}
 
-        {activeTab === 'DEPOSITS' && (
+        {!loading && !error && activeTab === 'DEPOSITS' && (
           <div className="space-y-2">
             {deposits.map(d => (
               <div key={d.id} className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
@@ -1207,7 +1246,7 @@ function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
           </div>
         )}
 
-        {activeTab === 'LOGS' && (
+        {!loading && !error && activeTab === 'LOGS' && (
           <div className="space-y-2">
             {logs.map(l => (
               <div key={l.id} className="bg-[#161b22] p-3 rounded-lg border border-[#30363d] text-[10px]">
@@ -1222,7 +1261,7 @@ function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
           </div>
         )}
 
-        {activeTab === 'SETTINGS' && (
+        {!loading && !error && activeTab === 'SETTINGS' && (
           <div className="space-y-4 pb-32">
             <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d] space-y-4">
               {[

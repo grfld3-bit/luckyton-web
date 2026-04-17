@@ -27,6 +27,16 @@ async function startServer() {
     }
   });
 
+  try {
+    console.log("Checking database connection...");
+    await prisma.$connect();
+    console.log("Database connected successfully");
+  } catch (dbError: any) {
+    console.error("CRITICAL: Database connection failed!", dbError.message);
+    // We don't exit(1) here so the server can still serve health checks
+    // and explain the error via JSON instead of a vague 404/500
+  }
+
   app.use(cors());
   app.use(express.json());
 

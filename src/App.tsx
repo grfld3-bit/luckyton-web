@@ -12,7 +12,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-const API_URL = (import.meta as any).env?.VITE_API_URL || window.location.origin;
+const BASE_URL = (import.meta as any).env?.VITE_API_URL || window.location.origin;
+const API_URL = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
 let socket: any;
 
 // --- UTILS ---
@@ -36,6 +37,8 @@ function LuckyTONApp() {
     const tg = (window as any).Telegram?.WebApp;
     if (tg) tg.ready();
     
+    console.log("Effective API_URL:", API_URL);
+
     // Simulate TG User in Local
     const mockUser = { id: 12345678, first_name: "Garf", last_name: "Field", username: "garf_field" };
     
@@ -47,6 +50,12 @@ function LuckyTONApp() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ initDataUnsafe: tg?.initDataUnsafe?.user ? tg.initDataUnsafe : { user: mockUser } })
         });
+        
+        if (!response.ok) {
+          const text = await response.text();
+          console.error(`Auth failed with status ${response.status}:`, text);
+          throw new Error(`Server returned ${response.status}: ${text.slice(0, 100)}`);
+        }
         
         const data = await response.json();
         if (data.user) {
@@ -1267,7 +1276,7 @@ function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
 
 export default function App() {
   return (
-    <TonConnectUIProvider manifestUrl={`${window.location.origin}/tonconnect-manifest.json`}>
+    <TonConnectUIProvider manifestUrl={`${API_URL}/tonconnect-manifest.json`}>
       <AppRoot>
         <LuckyTONApp />
       </AppRoot>

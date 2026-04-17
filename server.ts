@@ -30,6 +30,32 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
+  // Dynamic TON Connect Manifest
+  app.get("/tonconnect-manifest.json", (req, res) => {
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const origin = `${protocol}://${host}`;
+    
+    res.json({
+      url: origin,
+      name: "LuckyTON",
+      iconUrl: `${origin}/tonconnect-icon.png` // make sure to have an icon or use default
+    });
+  });
+
+  // Health Check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // Global API Logger
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      console.log(`[API Request] ${req.method} ${req.path}`);
+    }
+    next();
+  });
+
   // --- TOURNAMENT SCHEDULER ---
   // Runs every hour to create a tournament and handle registration/logic
   cron.schedule("0 * * * *", async () => {
@@ -765,6 +791,25 @@ async function startServer() {
 
   io.on("connection", (socket) => {
     socket.on("disconnect", () => {});
+  });
+
+  // Global Error Handler for API routes
+  app.use((err: any, req: any, res: any, next: any) => {
+    if (req.path.startsWith('/api')) {
+      console.error("[Global API Error]", err);
+      return res.status(500).json({ 
+        error: "Internal Server Error", 
+        message: err.message,
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      });
+    }
+    next(err);
+  });
+
+  // API 404 Handler (Must be after all API routes)
+  app.all('/api/*', (req, res) => {
+    console.warn(`[API 404] ${req.method} ${req.path}`);
+    res.status(404).json({ error: "API Route not found", path: req.path });
   });
 
   if (process.env.NODE_ENV !== "production") {

@@ -2,9 +2,16 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Star, XCircle } from 'lucide-react';
 
-const ScratchCard: any = (props: any) => {
+const ScratchCard: any = ({ children }: any) => {
   // Fallback if scratch-card-react fails as a component
-  return <div className="w-full h-full bg-slate-700 flex items-center justify-center text-slate-400 font-bold">REVEALED</div>;
+  return (
+    <div className="w-full h-full relative cursor-pointer">
+      {children}
+      <div className="absolute inset-0 bg-slate-700/80 flex items-center justify-center text-slate-400 font-bold pointer-events-none">
+        GOCOK MANUAL
+      </div>
+    </div>
+  );
 };
 
 interface ScratchCardGameProps {

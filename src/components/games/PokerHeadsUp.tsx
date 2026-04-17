@@ -76,7 +76,7 @@ export const PokerHeadsUp: React.FC<PokerHeadsUpProps> = ({ onPlay }) => {
         <span className="text-white/50 text-[10px] uppercase font-bold tracking-widest">Dealer</span>
         <div className="flex gap-2 h-24">
           {houseCards.map((c, i) => (
-            <Card key={i} suit={c[1]} rank={c[0]} hidden={stage === 'DEALING'} />
+            <Card key={i} suit={c.slice(-1)} rank={c.slice(0, -1)} hidden={stage === 'DEALING'} />
           ))}
           {houseCards.length === 0 && Array(2).fill(0).map((_, i) => <div key={i} className="w-16 h-24 border-2 border-dashed border-white/10 rounded-lg" />)}
         </div>
@@ -101,7 +101,7 @@ export const PokerHeadsUp: React.FC<PokerHeadsUpProps> = ({ onPlay }) => {
       <div className="z-10 flex flex-col items-center gap-2">
         <div className="flex gap-2 h-24">
            {userCards.map((c, i) => (
-            <Card key={i} suit={c[1]} rank={c[0]} />
+            <Card key={i} suit={c.slice(-1)} rank={c.slice(0, -1)} />
           ))}
           {userCards.length === 0 && Array(2).fill(0).map((_, i) => <div key={i} className="w-16 h-24 border-2 border-dashed border-white/10 rounded-lg" />)}
         </div>

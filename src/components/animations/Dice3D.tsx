@@ -38,6 +38,7 @@ const Die: React.FC<DieProps> = ({ rolling, result }) => {
   return (
     <Box ref={meshRef} args={[2, 2, 2]}>
       {[...Array(6)].map((_, i) => (
+        // @ts-ignore
         <meshStandardMaterial
           key={i}
           attach={`material-${i}`}
@@ -54,7 +55,9 @@ export const Dice3D: React.FC<DieProps> = ({ rolling, result }) => {
     <div className="w-full h-48 bg-slate-900 rounded-xl overflow-hidden">
       <Canvas>
         <PerspectiveCamera makeDefault position={[0, 0, 8]} />
+        {/* @ts-ignore */}
         <ambientLight intensity={0.5} />
+        {/* @ts-ignore */}
         <pointLight position={[10, 10, 10]} intensity={1} />
         <Die rolling={rolling} result={result} />
       </Canvas>

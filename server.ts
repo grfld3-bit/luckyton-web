@@ -87,8 +87,14 @@ async function startServer() {
   });
 
   // Health Check
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  app.get("/api/health", async (req, res) => {
+    let dbStatus = "connected";
+    try {
+      await prisma.$executeRaw`SELECT 1`;
+    } catch (e) {
+      dbStatus = "error";
+    }
+    res.json({ status: "ok", db: dbStatus, timestamp: new Date().toISOString() });
   });
 
   // --- TOURNAMENT SCHEDULER ---
@@ -643,7 +649,7 @@ async function startServer() {
       const users = await prisma.user.findMany({
         where: search ? {
           OR: [
-            { username: { contains: String(search), mode: 'insensitive' } },
+            { username: { contains: String(search) } },
             { telegramId: { contains: String(search) } }
           ]
         } : {},

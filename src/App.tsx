@@ -17,8 +17,8 @@ import { CoinFlip } from './components/games/CoinFlip';
 import { DiceRoll } from './components/games/DiceRoll';
 import { PokerHeadsUp } from './components/games/PokerHeadsUp';
 import { ChestDaily } from './components/games/ChestDaily';
-import { ScratchCardGame } from './components/games/ScratchCard.tsx';
 import { HigherLower } from './components/games/HigherLower';
+import { ScratchCardGame } from './components/games/ScratchCard';
 
 const BASE_URL = (import.meta as any).env?.VITE_API_URL || window.location.origin;
 const API_URL = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
@@ -135,7 +135,8 @@ function LuckyTONApp() {
     }
   };
 
-  const isAdmin = user && (import.meta as any).env?.VITE_ADMIN_IDS?.split(',').includes(user.telegramId);
+  const adminIdsString = (import.meta as any).env?.VITE_ADMIN_IDS || "";
+  const isAdmin = !!(user && adminIdsString.split(',').includes(String(user.telegramId)));
   const [showAdmin, setShowAdmin] = useState(false);
 
   if (loading) return (
@@ -487,7 +488,7 @@ function TournamentView({ tournament, user, fetchTournament }: any) {
     else fetchTournament();
   };
 
-  const isJoined = tournament.participants.some((p: any) => p.userId === user.id);
+  const isJoined = tournament.participants.some((p: any) => p.userId === user?.id);
 
   return (
     <div className="space-y-6">
@@ -514,7 +515,7 @@ function TournamentView({ tournament, user, fetchTournament }: any) {
            </div>
         </div>
 
-        {!isJoined && tournament.status === 'REGISTRATION' && (
+        {!isJoined && user && tournament.status === 'REGISTRATION' && (
           <button 
             onClick={handleJoin}
             className="w-full mt-4 py-4 bg-white text-black font-black uppercase rounded-2xl shadow-xl active:scale-95 transition-transform"

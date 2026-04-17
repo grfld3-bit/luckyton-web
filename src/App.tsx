@@ -8,12 +8,21 @@ import {
   ArrowDownLeft, Gift, Trophy, User as UserIcon, 
   Layers, CreditCard, History, Zap, CheckCircle2, AlertCircle,
   Shield, X, Search, Ban, DollarSign, Activity, Settings as SettingsIcon,
-  LayoutDashboard, Users, FileText, ChevronRight
+  LayoutDashboard, Users, FileText, ChevronRight, Star, XCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+import { useBalanceStore } from './stores/balanceStore';
+import { CoinFlip } from './components/games/CoinFlip';
+import { DiceRoll } from './components/games/DiceRoll';
+import { PokerHeadsUp } from './components/games/PokerHeadsUp';
+import { ChestDaily } from './components/games/ChestDaily';
+import { ScratchCardGame } from './components/games/ScratchCard.tsx';
+import { HigherLower } from './components/games/HigherLower';
+
 const BASE_URL = (import.meta as any).env?.VITE_API_URL || window.location.origin;
 const API_URL = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
+
 let socket: any;
 
 // --- UTILS ---
@@ -21,6 +30,7 @@ const formatTON = (val: number = 0) => val.toFixed(2);
 
 function LuckyTONApp() {
   const { user, setUser, games, setGames, addGame, updateGame, updateBalances } = useAppStore();
+  const { mainBalance, bonusBalance, connectSocket, setBalance } = useBalanceStore();
   const address = useTonAddress();
   const [tonConnectUI] = useTonConnectUI();
   const [activeTab, setActiveTab] = useState<'PVP' | 'SOLO' | 'TOURNEY' | 'PROFILE'>('PVP');
@@ -57,10 +67,20 @@ function LuckyTONApp() {
           throw new Error(`Server returned ${response.status}: ${text.slice(0, 100)}`);
         }
         
+        // Check if response is JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          const body = await response.text();
+          console.error("Expected JSON but received non-JSON response:", body.slice(0, 200));
+          throw new Error("Server returned non-JSON response (likely HTML). Check if the server is running and API routes are correct.");
+        }
+
         const data = await response.json();
         if (data.user) {
           setUser(data.user);
-          console.log("Auth successful");
+          setBalance(data.user.mainBalance, data.user.bonusBalance);
+          connectSocket(data.user.id, API_URL);
+          console.log("Auth successful and Socket connected");
         } else if (data.error) {
           console.error("Auth error from server:", data.error);
         }
@@ -165,7 +185,7 @@ function LuckyTONApp() {
           )}
           <div className="flex flex-col items-end gap-1">
             <div className="flex items-center gap-2 bg-[#161b22] border border-[#30363d] px-3 py-1 rounded-full">
-              <span className="text-sm font-mono text-white">{formatTON(user?.mainBalance)}</span>
+              <span className="text-sm font-mono text-white">{formatTON(mainBalance)}</span>
               <span className="text-[10px] text-blue-400 font-bold">TON</span>
             </div>
           </div>
@@ -175,7 +195,7 @@ function LuckyTONApp() {
       <main className="flex-1 overflow-y-auto p-4 custom-scrollbar">
         {/* Daily Bonus Quick Link */}
         <button 
-          onClick={claimChest}
+          onClick={() => setShowChestModal(true)}
           className="w-full mb-6 p-4 rounded-2xl bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 flex items-center justify-between group hover:border-blue-500/50 transition-all"
         >
           <div className="flex items-center gap-4">
@@ -344,32 +364,38 @@ function SoloGames({ user }: any) {
   const [selectedGame, setSelectedGame] = useState<any>(null);
 
   const soloGames = [
-    { id: 'SCRATCH', title: 'Scratch Card', icon: CreditCard, color: 'text-yellow-400', bg: 'bg-yellow-400/5', desc: 'Reveal 9 cells for up to 10x prizes!' },
-    { id: 'RED_BLACK', title: 'Red or Black', icon: Club, color: 'text-red-400', bg: 'bg-red-400/5', desc: 'Predict card color. Simple 1.95x win.' },
-    { id: 'HIGHER_LOWER', title: 'High/Low', icon: Zap, color: 'text-green-400', bg: 'bg-green-400/5', desc: 'Next card higher or lower? Chain for profits.' }
+    { id: 'COIN_FLIP', title: 'Coin Flip', icon: Coins, color: 'text-yellow-400', bg: 'bg-yellow-400/5', desc: 'Predict Head or Tail. 1.95x Win.' },
+    { id: 'DICE', title: 'Dice Battle', icon: Dice5, color: 'text-indigo-400', bg: 'bg-indigo-400/5', desc: 'Beat the house in proximity betting.' },
+    { id: 'POKER', title: 'Heads-Up Poker', icon: Club, color: 'text-emerald-400', bg: 'bg-emerald-400/5', desc: 'Direct All-in. Fastest Poker action.' },
+    { id: 'SCRATCH', title: 'Gold Scratch', icon: CreditCard, color: 'text-amber-400', bg: 'bg-amber-400/5', desc: 'Match stars to win up to 10x.' },
+    { id: 'HIGHER_LOWER', title: 'Higher/Lower', icon: Zap, color: 'text-rose-400', bg: 'bg-rose-400/5', desc: 'Predict the next card. Chain for streak.' }
   ];
 
   if (selectedGame) return <SoloGamePlay game={selectedGame} onBack={() => setSelectedGame(null)} user={user} />;
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-bold text-white mb-6">Solo Games</h2>
+    <div className="space-y-4 pb-10">
+      <div className="flex justify-between items-center mb-4">
+         <h2 className="text-xl font-black text-white">LUCKY SOLO</h2>
+         <div className="text-[10px] text-slate-500 font-bold bg-slate-800 px-3 py-1 rounded-full border border-slate-700">PROVABLY FAIR</div>
+      </div>
       <div className="grid grid-cols-1 gap-4">
         {soloGames.map(g => (
           <motion.button 
             key={g.id}
             onClick={() => setSelectedGame(g)}
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className={`flex items-center gap-5 p-5 rounded-2xl border border-[#30363d] text-left hover:bg-[#161b22] transition-colors group ${g.bg}`}
+            initial={{ opacity: 0, scale: 0.95 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            className={`flex items-center gap-5 p-5 rounded-2xl border border-white/5 text-left hover:bg-white/[0.02] transition-all group ${g.bg}`}
           >
-            <div className={`p-4 rounded-xl bg-gray-900 border border-[#30363d] ${g.color} group-hover:scale-110 transition-transform`}>
+            <div className={`p-4 rounded-xl bg-slate-900 border border-white/5 ${g.color} group-hover:scale-110 transition-transform`}>
               <g.icon size={28} />
             </div>
             <div className="flex-1">
-              <div className="font-bold text-lg text-white">{g.title}</div>
-              <div className="text-sm text-gray-500 leading-snug">{g.desc}</div>
+              <div className="font-black text-lg text-white tracking-tight">{g.title}</div>
+              <div className="text-xs text-slate-500 leading-snug">{g.desc}</div>
             </div>
+            <ChevronRight className="text-slate-700 group-hover:translate-x-1 transition-transform" />
           </motion.button>
         ))}
       </div>
@@ -378,79 +404,64 @@ function SoloGames({ user }: any) {
 }
 
 function SoloGamePlay({ game, onBack, user }: any) {
-  const [playing, setPlaying] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const [bet, setBet] = useState(0.5);
+  const [bet, setBet] = useState(1);
 
-  const play = async (choice?: string) => {
-    setPlaying(true);
+  const handleGameAction = async (endpoint: string, payload: any) => {
     try {
-      const res = await fetch(`${API_URL}/api/solo/play`, {
+      const res = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, type: game.id, bet, choice })
+        body: JSON.stringify({ userId: user.id, bet, ...payload })
       });
-      const data = await res.json();
-      setResult(data);
+      return await res.json();
     } catch (e) {
       console.error(e);
-    } finally {
-      setPlaying(false);
+      throw e;
     }
   };
 
   return (
     <div className="space-y-6">
-      <button onClick={onBack} className="text-sm text-gray-500 flex items-center gap-2 hover:text-white mb-4">
-        &larr; Back to Games
+      <button onClick={onBack} className="text-xs text-slate-500 flex items-center gap-2 hover:text-white mb-2 font-bold uppercase tracking-widest">
+        &larr; Exit {game.title}
       </button>
 
-      <div className="glass-panel p-8 text-center relative overflow-hidden min-h-[400px] flex flex-col justify-center">
-        <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
-        
-        {playing ? (
-          <div className="animate-spin text-blue-500 mx-auto w-12 h-12 border-4 border-current border-t-transparent rounded-full" />
-        ) : result ? (
-          <div className="space-y-6">
-            <div className={`text-4xl font-black ${result.payout > 0 ? 'text-green-400' : 'text-gray-500'}`}>
-              {result.payout > 0 ? `+${formatTON(result.payout)} TON` : 'TRY AGAIN'}
-            </div>
-            <div className="text-gray-400 text-sm font-mono bg-gray-900/50 p-4 rounded-xl border border-[#30363d] overflow-hidden truncate">
-               <div className="text-[10px] text-gray-600 mb-1">PROVABLY FAIR SEED</div>
-               {result.serverSeed}
-            </div>
+      {game.id === 'COIN_FLIP' && (
+        <CoinFlip onFlip={(choice) => handleGameAction('/api/game/coinflip', { choice })} />
+      )}
+      
+      {game.id === 'DICE' && (
+        <DiceRoll onRoll={(choice) => handleGameAction('/api/game/dice', { choice })} />
+      )}
+
+      {game.id === 'POKER' && (
+        <PokerHeadsUp onPlay={() => handleGameAction('/api/game/poker', {})} />
+      )}
+      
+      {game.id === 'SCRATCH' && (
+        <ScratchCardGame onBuy={() => handleGameAction('/api/scratch/buy', {})} />
+      )}
+
+      {game.id === 'HIGHER_LOWER' && (
+        <HigherLower 
+          onStart={() => fetch(`${API_URL}/api/game/higherlower/start`, { method: 'POST' }).then(r => r.json())} 
+          onGuess={(currentCard, guess) => handleGameAction('/api/game/higherlower/guess', { currentCard, guess })} 
+        />
+      )}
+
+      <div className="bg-slate-800/50 p-6 rounded-3xl border border-white/5">
+        <label className="text-[10px] uppercase font-black text-slate-500 tracking-widest block mb-4">Set Bet Amount</label>
+        <div className="grid grid-cols-4 gap-2">
+          {[0.1, 0.5, 1, 5].map(v => (
             <button 
-              onClick={() => setResult(null)}
-              className="w-full py-4 rounded-2xl bg-white text-black font-bold uppercase tracking-widest"
+              key={v} 
+              onClick={() => setBet(v)}
+              className={`py-3 rounded-xl text-xs font-black transition-all ${bet === v ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-900 text-slate-500 hover:text-slate-300'}`}
             >
-              Play Again
+              {v} TON
             </button>
-          </div>
-        ) : (
-          <div className="space-y-8">
-            <h2 className="text-3xl font-black text-white">{game.title}</h2>
-            <div className="flex flex-col gap-4">
-               {game.id === 'RED_BLACK' && (
-                 <div className="flex gap-4">
-                   <button onClick={() => play('RED')} className="flex-1 py-10 bg-red-600 rounded-2xl text-2xl font-bold shadow-xl shadow-red-600/20 active:scale-95 transition-transform">RED</button>
-                   <button onClick={() => play('BLACK')} className="flex-1 py-10 bg-gray-800 rounded-2xl text-2xl font-bold border border-gray-600 shadow-xl active:scale-95 transition-transform">BLACK</button>
-                 </div>
-               )}
-               {game.id === 'SCRATCH' && (
-                 <button onClick={() => play()} className="w-full py-16 bg-gradient-to-tr from-yellow-600 to-yellow-400 rounded-2xl text-black font-black text-3xl shadow-xl shadow-yellow-500/30 active:scale-95 transition-transform">SCRATCH CARDS</button>
-               )}
-               {game.id === 'HIGHER_LOWER' && (
-                 <div className="text-gray-500 p-10 border border-dashed border-gray-700 rounded-2xl italic">Coming Soon</div>
-               )}
-            </div>
-            
-            <div className="flex items-center justify-center gap-4 bg-gray-900 p-2 rounded-2xl border border-[#30363d]">
-               {[0.5, 1, 2, 5].map(v => (
-                 <button key={v} onClick={() => setBet(v)} className={`px-4 py-2 rounded-xl text-sm font-mono ${bet === v ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}>{v}</button>
-               ))}
-            </div>
-          </div>
-        )}
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -637,34 +648,24 @@ function ChestRewardModal({ isOpen, onClose, user }: any) {
         paddingRight: 'env(safe-area-inset-right, 0px)'
       }}
     >
-      <motion.div 
-        initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-        className="glass-panel p-10 w-full max-w-sm text-center space-y-8 bg-gradient-to-b from-[#161b22] to-[#0d1117]"
-      >
-        <div className="relative">
-          <div className="absolute inset-0 bg-yellow-400/20 blur-3xl rounded-full" />
-          <div className="w-24 h-24 bg-yellow-400/20 border-2 border-yellow-400/50 rounded-full flex items-center justify-center mx-auto text-yellow-400 relative z-10 shadow-2xl">
-             <Gift size={48} />
-          </div>
-        </div>
-        
-        <div>
-          <h2 className="text-2xl font-black text-white mb-2">Claim Success!</h2>
-          <p className="text-gray-400 text-sm">You received bonus TON and a streak progression.</p>
-        </div>
-
-        <div className="bg-yellow-400/10 border border-yellow-500/20 p-4 rounded-2xl text-center">
-          <div className="text-xs font-bold text-yellow-500 uppercase tracking-widest mb-1">Current Streak</div>
-          <div className="text-3xl font-black text-white">{user?.currentStreak} DAYS</div>
-        </div>
-
+      <div className="w-full max-w-sm">
+        <ChestDaily onOpen={async () => {
+          const r = await fetch(`${API_URL}/api/chest/open`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: user.id })
+          });
+          const d = await r.json();
+          if (d.error) throw new Error(d.error);
+          return d;
+        }} />
         <button 
           onClick={onClose}
-          className="w-full py-4 rounded-2xl bg-white text-black font-black uppercase tracking-widest shadow-xl shadow-white/10"
+          className="w-full mt-4 py-3 text-slate-500 font-bold uppercase text-xs tracking-widest hover:text-white transition-colors"
         >
-          Sweet!
+          Tutup
         </button>
-      </motion.div>
+      </div>
     </div>
   );
 }

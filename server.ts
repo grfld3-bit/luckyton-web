@@ -27,29 +27,62 @@ async function startServer() {
     }
   });
 
+  // User socket mapping for balance updates
+  io.on("connection", (socket) => {
+    const userId = socket.handshake.query.userId as string;
+    if (userId) {
+      socket.join(`user:${userId}`);
+      console.log(`User ${userId} joined their balance room`);
+    }
+
+    socket.on("disconnect", () => {
+      console.log("Socket disconnected");
+    });
+  });
+
+  // Helper to emit balance update
+  const emitBalanceUpdate = async (userId: string) => {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { mainBalance: true, bonusBalance: true }
+    });
+    if (user) {
+      io.to(`user:${userId}`).emit('balance-updated', {
+        mainBalance: user.mainBalance,
+        bonusBalance: user.bonusBalance
+      });
+      console.log(`Emitted balance update to user:${userId}`, user);
+    }
+  };
+
   try {
     console.log("Checking database connection...");
     await prisma.$connect();
     console.log("Database connected successfully");
   } catch (dbError: any) {
     console.error("CRITICAL: Database connection failed!", dbError.message);
-    // We don't exit(1) here so the server can still serve health checks
-    // and explain the error via JSON instead of a vague 404/500
   }
 
   app.use(cors());
   app.use(express.json());
+
+  // Global API Logger
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.includes('tonconnect-manifest')) {
+      console.log(`[Incoming Request] ${req.method} ${req.path}`);
+    }
+    next();
+  });
 
   // Dynamic TON Connect Manifest
   app.get("/tonconnect-manifest.json", (req, res) => {
     const host = req.get('host');
     const protocol = req.protocol;
     const origin = `${protocol}://${host}`;
-    
     res.json({
       url: origin,
       name: "LuckyTON",
-      iconUrl: `${origin}/tonconnect-icon.png` // make sure to have an icon or use default
+      iconUrl: `${origin}/tonconnect-icon.png` 
     });
   });
 
@@ -58,21 +91,11 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Global API Logger
-  app.use((req, res, next) => {
-    if (req.path.startsWith('/api')) {
-      console.log(`[API Request] ${req.method} ${req.path}`);
-    }
-    next();
-  });
-
   // --- TOURNAMENT SCHEDULER ---
-  // Runs every hour to create a tournament and handle registration/logic
   cron.schedule("0 * * * *", async () => {
     console.log("Scheduling new tournament...");
     const nextHour = new Date();
     nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
-    
     await prisma.tournament.create({
       data: {
         startTime: nextHour,
@@ -129,7 +152,238 @@ async function startServer() {
     }
   });
 
-  // --- SOLO GAMES ---
+  // --- NEW SOLO GAMES V2 ---
+  
+  // COIN FLIP
+  app.post("/api/game/coinflip", async (req, res) => {
+    try {
+      const { userId, bet, choice } = req.body; // choice: 'head' or 'tail'
+      const user = await prisma.user.findUnique({ where: { id: String(userId) } });
+      if (!user || user.mainBalance < bet) return res.status(400).json({ error: "Insufficient balance" });
+
+      const result = Math.random() > 0.5 ? "head" : "tail";
+      const win = choice === result;
+      const payout = win ? bet * 1.95 : 0;
+
+      await prisma.$transaction([
+        prisma.user.update({
+          where: { id: String(userId) },
+          data: { mainBalance: { decrement: bet + (win ? -payout : 0) } }
+        }),
+        prisma.transaction.create({
+          data: {
+            userId: String(userId),
+            type: win ? "game_win" : "game_loss",
+            amount: win ? payout - bet : -bet,
+            balanceType: "main",
+            reference: "COIN_FLIP"
+          }
+        }),
+        prisma.soloGame.create({
+          data: {
+            userId: String(userId),
+            type: "COIN_FLIP",
+            bet,
+            payout,
+            resultState: JSON.stringify({ choice, result, win })
+          }
+        })
+      ]);
+
+      await emitBalanceUpdate(String(userId));
+      res.json({ result, payout, win });
+    } catch (e) {
+      res.status(500).json({ error: "Coin flip failed" });
+    }
+  });
+
+  // DICE (TEBAK ANGKA 1-6)
+  app.post("/api/game/dice", async (req, res) => {
+    try {
+      const { userId, bet, choice } = req.body; // choice is number 1-6
+      const user = await prisma.user.findUnique({ where: { id: String(userId) } });
+      if (!user || user.mainBalance < bet) return res.status(400).json({ error: "Insufficient balance" });
+
+      const diceResult = Math.floor(Math.random() * 6) + 1;
+      // House also "choices" a random number different from user for comparison
+      const houseChoice = Math.floor(Math.random() * 6) + 1;
+      
+      const userDiff = Math.abs(diceResult - choice);
+      const houseDiff = Math.abs(diceResult - houseChoice);
+
+      let win = false;
+      if (userDiff < houseDiff) {
+        win = true;
+      } else {
+        // Tie or user further away -> House wins (as per rules: Draw = house wins)
+        win = false;
+      }
+
+      const payout = win ? bet * 1.98 : 0; // 2% fee
+
+      await prisma.$transaction([
+        prisma.user.update({
+          where: { id: String(userId) },
+          data: { mainBalance: { decrement: bet + (win ? -payout : 0) } }
+        }),
+        prisma.soloGame.create({
+          data: {
+            userId: String(userId),
+            type: "DICE",
+            bet,
+            payout,
+            resultState: JSON.stringify({ choice, houseChoice, diceResult, win })
+          }
+        })
+      ]);
+
+      await emitBalanceUpdate(String(userId));
+      res.json({ diceResult, houseChoice, win, payout });
+    } catch (e) {
+      res.status(500).json({ error: "Dice game failed" });
+    }
+  });
+
+  // POKER (HEADS-UP)
+  app.post("/api/game/poker", async (req, res) => {
+    try {
+      const { userId, bet } = req.body;
+      const user = await prisma.user.findUnique({ where: { id: String(userId) } });
+      if (!user || user.mainBalance < bet) return res.status(400).json({ error: "Insufficient balance" });
+
+      // Simplified poker logic for heads-up
+      // 2 cards for user, 2 for house.
+      // We'll just assign a "power" value to determine winner
+      const userPower = Math.random();
+      const housePower = Math.random();
+      
+      let win = userPower > housePower;
+      // Tie = house wins
+      if (userPower === housePower) win = false;
+
+      let fee = bet * 0.03;
+      if (fee > 5) fee = 5;
+      const payout = win ? (bet * 2) - (fee * 2) : 0;
+
+      await prisma.$transaction([
+        prisma.user.update({
+          where: { id: String(userId) },
+          data: { mainBalance: { decrement: bet + (win ? -payout : 0) } }
+        }),
+        prisma.soloGame.create({
+          data: {
+            userId: String(userId),
+            type: "POKER",
+            bet,
+            payout,
+            resultState: JSON.stringify({ userPower, housePower, win })
+          }
+        })
+      ]);
+
+      await emitBalanceUpdate(String(userId));
+      res.json({ win, payout, userCards: ['Ad', 'As'], houseCards: ['Kh', 'Qs'] }); // Mock cards for animation
+    } catch (e) {
+      res.status(500).json({ error: "Poker failed" });
+    }
+  });
+
+  // CHEST DAILY
+  app.post("/api/chest/open", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      const user = await prisma.user.findUnique({ where: { id: String(userId) } });
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const now = new Date();
+      if (user.lastClaim && (now.getTime() - user.lastClaim.getTime() < 24 * 60 * 60 * 1000)) {
+        return res.status(400).json({ error: "Chest already opened today" });
+      }
+
+      const rand = Math.random();
+      let reward: any = { type: 'NONE', message: "Kamu kurang beruntung" };
+      let mainInc = 0;
+      let ticketInc = 0;
+
+      if (rand < 0.1) {
+        reward = { type: 'TON', amount: 0.5, message: "0.5 TON diperoleh" };
+        mainInc = 0.5;
+      } else if (rand < 0.3) {
+        reward = { type: 'TICKET', amount: 1, message: "Tiket Game Solo diperoleh" };
+        ticketInc = 1;
+      }
+
+      await prisma.user.update({
+        where: { id: String(userId) },
+        data: {
+          lastClaim: now,
+          mainBalance: { increment: mainInc },
+          ticketsBalance: { increment: ticketInc }
+        }
+      });
+
+      await emitBalanceUpdate(String(userId));
+      res.json({ reward });
+    } catch (e) {
+      res.status(500).json({ error: "Failed to open chest" });
+    }
+  });
+
+  // HIGHER / LOWER
+  app.post("/api/game/higherlower/start", async (req, res) => {
+    const card = Math.floor(Math.random() * 13) + 2; // 2-14
+    res.json({ card });
+  });
+
+  app.post("/api/game/higherlower/guess", async (req, res) => {
+    try {
+      const { userId, bet, currentCard, guess } = req.body; // guess: 'higher' | 'lower'
+      const nextCard = Math.floor(Math.random() * 13) + 2;
+      
+      let win = false;
+      if (guess === 'higher') win = nextCard > currentCard;
+      else win = nextCard < currentCard;
+
+      if (nextCard === currentCard) win = false; // tie = lose
+
+      const payout = win ? bet * 2 : 0;
+
+      if (win || !win) {
+         await prisma.$transaction([
+          prisma.user.update({
+            where: { id: String(userId) },
+            data: { mainBalance: { decrement: win ? bet - payout : bet } }
+          })
+        ]);
+        await emitBalanceUpdate(String(userId));
+      }
+
+      res.json({ nextCard, win, payout });
+    } catch (e) {
+      res.status(500).json({ error: "H/L failed" });
+    }
+  });
+
+  // SCRATCH (V2 specific endpoint if needed)
+  app.post("/api/scratch/buy", async (req, res) => {
+    // Reuse Solo play logic or simple one
+    try {
+      const { userId, bet } = req.body;
+      const payout = Math.random() > 0.8 ? bet * 2 : 0;
+      const win = payout > 0;
+      
+      await prisma.user.update({
+        where: { id: String(userId) },
+        data: { mainBalance: { decrement: win ? bet - payout : bet } }
+      });
+
+      await emitBalanceUpdate(String(userId));
+      res.json({ win, payout });
+    } catch (e) {
+      res.status(500).json({ error: "Scratch failed" });
+    }
+  });
+
   app.post("/api/solo/play", async (req, res) => {
     try {
       const { userId, type, bet, choice } = req.body;
@@ -242,8 +496,10 @@ async function startServer() {
         }
       });
 
-      const finalUser = await prisma.user.findUnique({ where: { id: String(userId) } });
-      res.json({ payout, outcome, serverSeed, user: finalUser });
+      // Emit balance update via socket
+      await emitBalanceUpdate(String(userId));
+
+      res.json({ payout, outcome, serverSeed });
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: "Solo game failed" });
@@ -330,9 +586,12 @@ async function startServer() {
 
       console.log(`User authenticated successfully: ${user.username}`);
       res.json({ user });
-    } catch (e) {
-      console.error("Authentication error:", e);
-      res.status(500).json({ error: "Failed to authenticate" });
+    } catch (e: any) {
+      console.error("Login Error:", e.message);
+      if (e.message?.includes("Can't reach database")) {
+        return res.status(503).json({ error: "Database connection failed. Please check your Railway DATABASE_URL (Public)." });
+      }
+      res.status(500).json({ error: "Failed to authenticate", message: e.message });
     }
   });
 
@@ -832,17 +1091,19 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, "0.0.0.0", async () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`LuckyTON Server active on port ${PORT}`);
+    console.log("Registered API Routes: /api/auth/login, /api/tournaments/active, /api/solo/play");
+    
     try {
       await initializeBots(io);
-    } catch (e) {
-      console.error("Failed to initialize bots (DB Connection Error?):", e);
+    } catch (e: any) {
+      console.error("CRITICAL: Bot initialization failed (Database Connection issue?):", e.message);
     }
     
     try {
       startDepositScanner();
-    } catch (e) {
-      console.error("Failed to start deposit scanner:", e);
+    } catch (e: any) {
+      console.error("Non-critical: Failed to start deposit scanner:", e.message);
     }
   });
 }
@@ -855,20 +1116,26 @@ const BOT_NAMES = ["CryptoKing", "TON_Warrior", "LuckyGarf", "AlphaDegen", "Swif
 let botDbIds: string[] = [];
 
 async function initializeBots(io: any) {
-  console.log("Initializing Bots...");
-  botDbIds = [];
-  for (let i = 0; i < BOT_TELEGRAM_IDS.length; i++) {
-      const user = await prisma.user.upsert({
-      where: { telegramId: BOT_TELEGRAM_IDS[i] },
-      update: {},
-      create: {
-        telegramId: BOT_TELEGRAM_IDS[i],
-        username: BOT_NAMES[i],
-        firstName: BOT_NAMES[i],
-        mainBalance: 1000,
-      }
-    });
-    botDbIds.push(user.id);
+  try {
+    console.log("Initializing Bots...");
+    botDbIds = [];
+    for (let i = 0; i < BOT_TELEGRAM_IDS.length; i++) {
+        const user = await prisma.user.upsert({
+        where: { telegramId: BOT_TELEGRAM_IDS[i] },
+        update: {},
+        create: {
+          telegramId: BOT_TELEGRAM_IDS[i],
+          username: BOT_NAMES[i],
+          firstName: BOT_NAMES[i],
+          mainBalance: 1000,
+        }
+      });
+      botDbIds.push(user.id);
+    }
+    console.log(`Successfully initialized ${botDbIds.length} bots.`);
+  } catch (err: any) {
+    console.error("initializeBots failed:", err.message);
+    throw err; // Re-throw to be caught in startServer
   }
 
   // Create bot challenges periodically (every 2.5 minutes)

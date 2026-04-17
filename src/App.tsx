@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { TonConnectUIProvider, useTonAddress, useTonConnectUI } from '@tonconnect/ui-react';
+import { AppRoot } from '@telegram-apps/telegram-ui';
 import { useAppStore } from './store/useAppStore';
 import io from 'socket.io-client';
 import { 
   Coins, Dice5, Club, Wallet, Play, Plus, ArrowUpRight, 
   ArrowDownLeft, Gift, Trophy, User as UserIcon, 
-  Layers, CreditCard, History, Zap, CheckCircle2, AlertCircle
+  Layers, CreditCard, History, Zap, CheckCircle2, AlertCircle,
+  Shield, X, Search, Ban, DollarSign, Activity, Settings as SettingsIcon,
+  LayoutDashboard, Users, FileText, ChevronRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -36,31 +39,44 @@ function LuckyTONApp() {
     // Simulate TG User in Local
     const mockUser = { id: 12345678, first_name: "Garf", last_name: "Field", username: "garf_field" };
     
-    fetch(`${API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initDataUnsafe: tg?.initDataUnsafe?.user ? tg.initDataUnsafe : { user: mockUser } })
-    })
-    .then(r => r.json())
-    .then(data => {
-      if (data.user) setUser(data.user);
-      setLoading(false);
-    })
-    .catch(console.error);
+    const initAuth = async () => {
+      try {
+        console.log("Initializing auth...");
+        const response = await fetch(`${API_URL}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initDataUnsafe: tg?.initDataUnsafe?.user ? tg.initDataUnsafe : { user: mockUser } })
+        });
+        
+        const data = await response.json();
+        if (data.user) {
+          setUser(data.user);
+          console.log("Auth successful");
+        } else if (data.error) {
+          console.error("Auth error from server:", data.error);
+        }
+      } catch (err) {
+        console.error("Auth initialization failed:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initAuth();
 
     socket = io(API_URL);
     socket.on('gameCreated', (game: any) => addGame(game));
     socket.on('gameUpdated', (game: any) => updateGame(game));
     socket.on('tournamentUpdated', () => fetchTournament());
 
-    fetch(`${API_URL}/api/games`).then(r => r.json()).then(setGames);
+    fetch(`${API_URL}/api/games`).then(r => r.json()).then(setGames).catch(console.error);
     fetchTournament();
 
-    return () => { socket.disconnect(); }
+    return () => { socket?.disconnect(); }
   }, []);
 
   const fetchTournament = () => {
-    fetch(`${API_URL}/api/tournaments/active`).then(r => r.json()).then(setTournament);
+    fetch(`${API_URL}/api/tournaments/active`).then(r => r.json()).then(setTournament).catch(console.error);
   };
 
   const claimChest = async () => {
@@ -90,10 +106,37 @@ function LuckyTONApp() {
     }
   };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#0d1117] text-white">Loading Arena...</div>;
+  const isAdmin = user && (import.meta as any).env?.VITE_ADMIN_IDS?.split(',').includes(user.telegramId);
+  const [showAdmin, setShowAdmin] = useState(false);
+
+  if (loading) return (
+    <div 
+      className="min-h-screen flex items-center justify-center bg-[#0d1117] text-white flex-col gap-4" 
+      style={{ 
+        paddingTop: 'env(safe-area-inset-top, 20px)', 
+        paddingBottom: 'env(safe-area-inset-bottom, 20px)', 
+        paddingLeft: 'env(safe-area-inset-left, 0px)', 
+        paddingRight: 'env(safe-area-inset-right, 0px)' 
+      }}
+    >
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      <div className="font-bold tracking-tight">Loading Arena...</div>
+    </div>
+  );
+
+  if (showAdmin && isAdmin) {
+    return <AdminPanel user={user} onClose={() => setShowAdmin(false)} />;
+  }
 
   return (
-    <div className="min-h-screen bg-[#0d1117] text-[#c9d1d9] pb-24 max-w-lg mx-auto relative overflow-hidden flex flex-col font-sans">
+    <div 
+      className="min-h-screen bg-[#0d1117] text-[#c9d1d9] pb-32 max-w-lg mx-auto relative overflow-hidden flex flex-col font-sans"
+      style={{ 
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)'
+      }}
+    >
       {/* Header */}
       <header className="p-4 flex justify-between items-center sticky top-0 z-30 bg-[#0d1117]/80 backdrop-blur-md border-b border-[#30363d]">
         <div className="flex flex-col">
@@ -102,22 +145,21 @@ function LuckyTONApp() {
             </h1>
             <div className="text-[10px] text-gray-500 font-mono tracking-widest uppercase">Safe & Fair PvP</div>
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <div className="flex items-center gap-2 bg-[#161b22] border border-[#30363d] px-3 py-1 rounded-full">
-            <span className="text-sm font-mono text-white">{formatTON(user?.mainBalance)}</span>
-            <span className="text-[10px] text-blue-400 font-bold">TON</span>
-          </div>
-          {user && user.bonusBalance > 0 && (
-            <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/20 px-2 py-0.5 rounded-full">
-              <span className="text-[10px] font-mono text-yellow-400">{formatTON(user.bonusBalance)} BONUS</span>
-              <div className="h-1 w-8 bg-gray-700 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-yellow-500" 
-                  style={{ width: `${Math.max(0, 100 - (user.wageringRemaining / (user.bonusBalance * 5)) * 100)}%` }}
-                />
-              </div>
-            </div>
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <button 
+              onClick={() => setShowAdmin(true)}
+              className="p-2 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 hover:bg-red-500/20 transition-all"
+            >
+              <Shield size={18} />
+            </button>
           )}
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2 bg-[#161b22] border border-[#30363d] px-3 py-1 rounded-full">
+              <span className="text-sm font-mono text-white">{formatTON(user?.mainBalance)}</span>
+              <span className="text-[10px] text-blue-400 font-bold">TON</span>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -154,7 +196,10 @@ function LuckyTONApp() {
       </main>
 
       {/* Navigation */}
-      <nav className="fixed bottom-0 w-full max-w-lg bg-[#0d1117]/90 backdrop-blur-xl border-t border-[#30363d] p-3 flex justify-around items-center z-40">
+      <nav 
+        className="fixed bottom-0 w-full max-w-lg bg-[#0d1117]/90 backdrop-blur-xl border-t border-[#30363d] p-3 flex justify-around items-center z-40"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' }}
+      >
         {[
           { tab: 'PVP', icon: Zap, label: 'Arena' },
           { tab: 'SOLO', icon: Layers, label: 'Solo' },
@@ -574,7 +619,15 @@ function ProfileView({ user, address, connect, onDeposit, onWithdraw }: any) {
 function ChestRewardModal({ isOpen, onClose, user }: any) {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-xl bg-black/80">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-xl bg-black/80"
+      style={{ 
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)'
+      }}
+    >
       <motion.div 
         initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
         className="glass-panel p-10 w-full max-w-sm text-center space-y-8 bg-gradient-to-b from-[#161b22] to-[#0d1117]"
@@ -637,7 +690,15 @@ function CreateGameModal({ isOpen, onClose, user }: any) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-sm bg-black/60">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-sm bg-black/60"
+      style={{ 
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)'
+      }}
+    >
       <motion.div 
         initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
         className="bg-[#161b22] border border-[#30363d] rounded-3xl w-full max-w-sm p-8 shadow-2xl"
@@ -720,7 +781,15 @@ function DepositModal({ isOpen, onClose, user }: any) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-sm bg-black/60">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-sm bg-black/60"
+      style={{ 
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)'
+      }}
+    >
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
         className="bg-[#161b22] border border-[#30363d] rounded-3xl w-full max-w-sm p-8 shadow-2xl space-y-6"
@@ -774,20 +843,20 @@ function WithdrawModal({ isOpen, onClose, user, address, refreshUser }: any) {
   const [registering, setRegistering] = useState(false);
 
   const handleRegister = async () => {
-     if (!address) return alert("Connect wallet first!");
-     setRegistering(true);
-     try {
-       await fetch(`${API_URL}/api/wallet/register-address`, {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ userId: user.id, address })
-       });
-       refreshUser();
-     } catch (e) {
-       console.error(e);
-     } finally {
-       setRegistering(false);
-     }
+    if (!address) return alert("Connect wallet first!");
+    setRegistering(true);
+    try {
+      await fetch(`${API_URL}/api/wallet/register-address`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, address })
+      });
+      refreshUser();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setRegistering(false);
+    }
   };
 
   const handleWithdraw = async () => {
@@ -819,7 +888,15 @@ function WithdrawModal({ isOpen, onClose, user, address, refreshUser }: any) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-sm bg-black/60">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-sm bg-black/60"
+      style={{ 
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)'
+      }}
+    >
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
         className="bg-[#161b22] border border-[#30363d] rounded-3xl w-full max-w-sm p-8 shadow-2xl space-y-6"
@@ -888,10 +965,312 @@ function WithdrawModal({ isOpen, onClose, user, address, refreshUser }: any) {
   );
 }
 
+function AdminPanel({ user, onClose }: { user: any, onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<'STATS' | 'USERS' | 'WITHDRAWS' | 'DEPOSITS' | 'LOGS' | 'SETTINGS'>('STATS');
+  const [stats, setStats] = useState<any>(null);
+  const [users, setUsers] = useState<any[]>([]);
+  const [withdrawals, setWithdrawals] = useState<any[]>([]);
+  const [deposits, setDeposits] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [settings, setSettings] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const fetchWithAuth = async (url: string, options: any = {}) => {
+    return fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        'Content-Type': 'application/json',
+        'x-telegram-id': user.telegramId
+      }
+    });
+  };
+
+  useEffect(() => {
+    refreshData();
+  }, [activeTab]);
+
+  const refreshData = async () => {
+    setLoading(true);
+    try {
+      if (activeTab === 'STATS') {
+        const res = await fetchWithAuth(`${API_URL}/api/admin/stats`);
+        setStats(await res.json());
+      } else if (activeTab === 'USERS') {
+        const res = await fetchWithAuth(`${API_URL}/api/admin/users?search=${searchTerm}`);
+        setUsers(await res.json());
+      } else if (activeTab === 'WITHDRAWS') {
+        const res = await fetchWithAuth(`${API_URL}/api/admin/withdrawals`);
+        setWithdrawals(await res.json());
+      } else if (activeTab === 'DEPOSITS') {
+        const res = await fetchWithAuth(`${API_URL}/api/admin/deposits`);
+        setDeposits(await res.json());
+      } else if (activeTab === 'LOGS') {
+        const res = await fetchWithAuth(`${API_URL}/api/admin/logs`);
+        setLogs(await res.json());
+      } else if (activeTab === 'SETTINGS') {
+        const res = await fetchWithAuth(`${API_URL}/api/admin/settings`);
+        setSettings(await res.json());
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateSetting = async (key: string) => {
+    const value = prompt(`Enter new value for ${key}:`);
+    if (value === null) return;
+    try {
+      await fetchWithAuth(`${API_URL}/api/admin/settings`, {
+        method: 'POST',
+        body: JSON.stringify({ key, value, adminId: user.id })
+      });
+      refreshData();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleBan = async (id: string, currentlyBanned: boolean) => {
+    const reason = prompt("Enter reason for ban/unban:");
+    try {
+      await fetchWithAuth(`${API_URL}/api/admin/users/${id}/ban`, {
+        method: 'POST',
+        body: JSON.stringify({ banned: !currentlyBanned, reason, adminId: user.id })
+      });
+      refreshData();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleAdjustBalance = async (id: string) => {
+    const amount = prompt("Enter amount to add/subtract (e.g. 10 or -10):");
+    const reason = prompt("Enter reason for adjustment:");
+    if (!amount || isNaN(Number(amount))) return;
+    try {
+      await fetchWithAuth(`${API_URL}/api/admin/users/${id}/adjust-balance`, {
+        method: 'POST',
+        body: JSON.stringify({ amount: Number(amount), reason, adminId: user.id })
+      });
+      refreshData();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleWithdrawStatus = async (id: string, status: string) => {
+    try {
+      await fetchWithAuth(`${API_URL}/api/admin/withdrawals/${id}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status, adminId: user.id })
+      });
+      refreshData();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleAssignDeposit = async (id: string) => {
+    const tgId = prompt("Enter Telegram ID of the user to assign this deposit to:");
+    if (!tgId) return;
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/admin/deposits/${id}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ telegramId: tgId, adminId: user.id })
+      });
+      const data = await res.json();
+      if (data.error) alert(data.error);
+      else refreshData();
+    } catch (e) { console.error(e); }
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 z-[60] bg-[#0d1117] flex flex-col text-white"
+      style={{ 
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)'
+      }}
+    >
+      <header className="p-4 border-b border-[#30363d] flex justify-between items-center bg-[#161b22]">
+        <div className="flex items-center gap-3">
+          <Shield className="text-red-500" />
+          <h1 className="font-bold">LuckyTON Admin</h1>
+        </div>
+        <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-lg">
+          <X />
+        </button>
+      </header>
+
+      <main className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+        {activeTab === 'STATS' && stats && (
+          <div className="grid grid-cols-2 gap-4">
+            {[
+              { label: 'Total Users', value: stats.totalUsers, icon: Users, color: 'text-blue-400' },
+              { label: 'Active 24h', value: stats.active24h, icon: Activity, color: 'text-green-400' },
+              { label: 'Total Volume', value: `${stats.totalVolume.toFixed(2)} TON`, icon: LayoutDashboard, color: 'text-purple-400' },
+              { label: 'Total Profit', value: `${stats.totalProfit.toFixed(2)} TON`, icon: DollarSign, color: 'text-yellow-400' },
+              { label: 'Pending WD', value: stats.pendingWithdrawals, icon: Wallet, color: 'text-red-400' }
+            ].map((s, i) => (
+              <div key={i} className="bg-[#161b22] p-4 rounded-2xl border border-[#30363d]">
+                <s.icon className={`${s.color} mb-2`} size={20} />
+                <div className="text-[10px] uppercase font-bold text-gray-500 mb-1">{s.label}</div>
+                <div className="text-xl font-black">{s.value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === 'USERS' && (
+          <div className="space-y-4">
+            <div className="flex gap-2">
+              <input 
+                type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                placeholder="Search Telegram ID / Username"
+                className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-xl px-4 py-2 text-sm"
+              />
+              <button onClick={refreshData} className="bg-blue-600 p-2 rounded-xl"><Search size={20}/></button>
+            </div>
+            <div className="space-y-2">
+              {users.map(u => (
+                <div key={u.id} className="bg-[#161b22] p-4 rounded-xl border border-[#30363d] flex justify-between items-center">
+                  <div>
+                    <div className="font-bold flex items-center gap-2">
+                      {u.username || u.firstName}
+                      {u.isBanned && <span className="bg-red-500 text-[8px] px-1 rounded">BANNED</span>}
+                    </div>
+                    <div className="text-[10px] text-gray-500">ID: {u.telegramId} | Bal: {u.mainBalance.toFixed(2)} TON</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => handleAdjustBalance(u.id)} className="p-2 bg-yellow-500/10 text-yellow-500 rounded-lg"><DollarSign size={16}/></button>
+                    <button onClick={() => handleBan(u.id, u.isBanned)} className={`p-2 rounded-lg ${u.isBanned ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                      <Ban size={16}/>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'WITHDRAWS' && (
+          <div className="space-y-2">
+            {withdrawals.map(w => (
+              <div key={w.id} className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <div className="font-bold">{w.amount} TON</div>
+                    <div className="text-[10px] text-gray-500">To: {w.user?.username || w.user?.firstName}</div>
+                    <div className="text-[8px] font-mono text-gray-600 truncate max-w-[150px]">{w.toAddress}</div>
+                  </div>
+                  <span className={`text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${w.status === 'pending' ? 'bg-yellow-500/20 text-yellow-500' : w.status === 'completed' ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
+                    {w.status}
+                  </span>
+                </div>
+                {w.status === 'pending' && (
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={() => handleWithdrawStatus(w.id, 'completed')} className="flex-1 py-1 px-2 bg-green-600 text-[10px] font-bold rounded">APPROVE</button>
+                    <button onClick={() => handleWithdrawStatus(w.id, 'failed')} className="flex-1 py-1 px-2 bg-red-600 text-[10px] font-bold rounded">REJECT</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === 'DEPOSITS' && (
+          <div className="space-y-2">
+            {deposits.map(d => (
+              <div key={d.id} className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <div className="font-bold text-blue-400">{d.amount} TON</div>
+                    <div className="text-[10px] text-gray-500">From: {d.fromAddress.slice(0, 10)}...</div>
+                    <div className="text-[8px] font-mono text-yellow-500 bg-yellow-500/5 px-1 rounded">Memo: {d.comment}</div>
+                  </div>
+                  <span className={`text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${d.status === 'credited' ? 'bg-green-500/20 text-green-500' : 'bg-yellow-500/20 text-yellow-500'}`}>
+                    {d.status}
+                  </span>
+                </div>
+                {d.status === 'pending' && (
+                  <button onClick={() => handleAssignDeposit(d.id)} className="w-full mt-2 py-1 bg-blue-600 text-[10px] font-bold rounded">ASSIGN TO USER</button>
+                )}
+                <div className="text-[8px] text-gray-600 mt-1 truncate">{d.txHash}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === 'LOGS' && (
+          <div className="space-y-2">
+            {logs.map(l => (
+              <div key={l.id} className="bg-[#161b22] p-3 rounded-lg border border-[#30363d] text-[10px]">
+                <div className="flex justify-between text-blue-400 font-bold mb-1">
+                  <span>{l.action}</span>
+                  <span className="text-gray-600">{new Date(l.createdAt).toLocaleString()}</span>
+                </div>
+                <div className="text-gray-300">{l.details}</div>
+                <div className="text-gray-500 mt-1">Admin: {l.admin?.username || l.adminId}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === 'SETTINGS' && (
+          <div className="space-y-4 pb-32">
+            <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d] space-y-4">
+              {[
+                { key: 'PLATFORM_FEE_PERCENT', label: 'Platform Fee (%)', desc: 'Biaya admin tiap game' },
+                { key: 'MIN_WITHDRAW_AMOUNT', label: 'Min Withdrawal (TON)', desc: 'Minimal penarikan saldo' },
+                { key: 'WAGERING_REQUIREMENT_MULTIPLIER', label: 'Wagering Multiplier', desc: 'Turnover bonus (e.g. 5 means 5x)' }
+              ].map(s => {
+                const setting = settings.find(st => st.key === s.key);
+                return (
+                  <div key={s.key} className="flex justify-between items-center p-3 bg-[#0d1117] rounded-xl border border-[#30363d]">
+                    <div>
+                      <div className="font-bold text-sm text-white">{s.label}</div>
+                      <div className="text-[10px] text-gray-500">{s.desc}</div>
+                      <div className="text-xs font-mono text-blue-400 mt-1">Value: {setting?.value || 'N/A'}</div>
+                    </div>
+                    <button onClick={() => updateSetting(s.key)} className="p-2 bg-blue-600 rounded-lg"><Plus size={16}/></button>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-gray-500 italic px-2">* Perubahan mungkin memerlukan restart worker jika digunakan secara internal.</p>
+          </div>
+        )}
+      </main>
+
+      <nav 
+        className="fixed bottom-0 w-full max-w-lg bg-[#161b22] border-t border-[#30363d] p-3 flex justify-around items-center"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' }}
+      >
+        {[
+          { tab: 'STATS', icon: LayoutDashboard },
+          { tab: 'USERS', icon: Users },
+          { tab: 'WITHDRAWS', icon: Wallet },
+          { tab: 'DEPOSITS', icon: FileText },
+          { tab: 'SETTINGS', icon: SettingsIcon },
+          { tab: 'LOGS', icon: History }
+        ].map(({ tab, icon: Icon }) => (
+          <button 
+            key={tab}
+            onClick={() => setActiveTab(tab as any)}
+            className={`flex flex-col items-center gap-1 transition-all ${activeTab === tab ? 'text-red-500' : 'text-gray-500'}`}
+          >
+            <Icon size={18} />
+            <span className="text-[7px] font-bold">{tab}</span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <TonConnectUIProvider manifestUrl={`${window.location.origin}/tonconnect-manifest.json`}>
-      <LuckyTONApp />
+      <AppRoot>
+        <LuckyTONApp />
+      </AppRoot>
     </TonConnectUIProvider>
   );
 }

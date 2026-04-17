@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 interface User {
   id: string;
+  telegramId: string;
   username: string;
   firstName: string;
   lastName: string;
@@ -14,6 +15,8 @@ interface User {
   currentStreak: number;
   lastClaim: string | null;
   ticketsBalance: number;
+  isBanned: boolean;
+  bannedReason: string | null;
 }
 
 interface AppStore {

@@ -261,13 +261,20 @@ async function startServer() {
   // API Route: Login/Profile
   app.post("/api/auth/login", async (req, res) => {
     try {
+      console.log("Login attempt received");
       const { initDataUnsafe } = req.body;
-      if (!initDataUnsafe || !initDataUnsafe.user) return res.status(400).json({ error: "Invalid initData" });
+      if (!initDataUnsafe || !initDataUnsafe.user) {
+        console.warn("Invalid login attempt: missing initDataUnsafe or user");
+        return res.status(400).json({ error: "Invalid initData" });
+      }
       
       const tgUser = initDataUnsafe.user;
+      console.log(`Authenticating user: ${tgUser.username} (${tgUser.id})`);
+
       let user = await prisma.user.findUnique({ where: { telegramId: tgUser.id.toString() } });
       
       if (!user) {
+        console.log(`Creating new user: ${tgUser.username}`);
         user = await prisma.user.create({
           data: {
             telegramId: tgUser.id.toString(),
@@ -275,13 +282,280 @@ async function startServer() {
             firstName: tgUser.first_name,
             lastName: tgUser.last_name,
             avatarUrl: tgUser.photo_url,
-            mainBalance: 0 // New users start with 0
+            mainBalance: 0 
           }
         });
       }
+
+      if (user.isBanned) {
+        console.warn(`Banned user attempted login: ${user.username}`);
+        return res.status(403).json({ error: "Your account is banned.", reason: user.bannedReason });
+      }
+
+      console.log(`User authenticated successfully: ${user.username}`);
       res.json({ user });
     } catch (e) {
+      console.error("Authentication error:", e);
       res.status(500).json({ error: "Failed to authenticate" });
+    }
+  });
+
+  // --- ADMIN MIDDLEWARE ---
+  const adminAuth = async (req: any, res: any, next: any) => {
+    const telegramId = req.headers['x-telegram-id'];
+    const adminIds = process.env.ADMIN_IDS?.split(',') || [];
+    
+    if (!telegramId || !adminIds.includes(String(telegramId))) {
+      console.warn(`Unauthorized admin access attempt from ID: ${telegramId}`);
+      return res.status(403).json({ error: 'Forbidden: Admin access required' });
+    }
+    next();
+  };
+
+  // --- ADMIN ROUTES ---
+  app.get("/api/admin/stats", adminAuth, async (req, res) => {
+    try {
+      const totalUsers = await prisma.user.count();
+      const active24h = await prisma.user.count({
+        where: { updatedAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } }
+      });
+      const totalVolume = await prisma.transaction.aggregate({
+        where: { type: { in: ["BET", "game_win", "game_loss"] } },
+        _sum: { amount: true }
+      });
+      const totalProfit = await prisma.game.aggregate({
+        _sum: { fee: true }
+      });
+      const pendingWithdrawals = await prisma.withdrawal.count({
+        where: { status: "pending" }
+      });
+
+      res.json({
+        totalUsers,
+        active24h,
+        totalVolume: Math.abs(totalVolume._sum.amount || 0),
+        totalProfit: totalProfit._sum.fee || 0,
+        pendingWithdrawals
+      });
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch stats" });
+    }
+  });
+
+  app.get("/api/admin/users", adminAuth, async (req, res) => {
+    try {
+      const { search } = req.query;
+      const users = await prisma.user.findMany({
+        where: search ? {
+          OR: [
+            { username: { contains: String(search), mode: 'insensitive' } },
+            { telegramId: { contains: String(search) } }
+          ]
+        } : {},
+        orderBy: { createdAt: 'desc' },
+        take: 50
+      });
+      res.json(users);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  app.post("/api/admin/users/:id/ban", adminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { banned, reason, adminId } = req.body;
+      const user = await prisma.user.update({
+        where: { id },
+        data: { isBanned: banned, bannedAt: banned ? new Date() : null, bannedReason: reason }
+      });
+      
+      await prisma.adminLog.create({
+        data: {
+          adminId,
+          action: banned ? "BAN_USER" : "UNBAN_USER",
+          targetId: id,
+          details: `Reason: ${reason || 'N/A'}`
+        }
+      });
+
+      res.json(user);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to update ban status" });
+    }
+  });
+
+  app.post("/api/admin/users/:id/adjust-balance", adminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { amount, adminId, reason } = req.body;
+      const user = await prisma.user.update({
+        where: { id },
+        data: { mainBalance: { increment: amount } }
+      });
+
+      await prisma.adminLog.create({
+        data: {
+          adminId,
+          action: "ADJUST_BALANCE",
+          targetId: id,
+          details: `Amount: ${amount}, Reason: ${reason}`
+        }
+      });
+
+      res.json(user);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to adjust balance" });
+    }
+  });
+
+  app.get("/api/admin/withdrawals", adminAuth, async (req, res) => {
+    try {
+      const withdrawals = await prisma.withdrawal.findMany({
+        include: { user: true },
+        orderBy: { createdAt: 'desc' }
+      });
+      res.json(withdrawals);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch withdrawals" });
+    }
+  });
+
+  app.post("/api/admin/withdrawals/:id/status", adminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, adminId } = req.body;
+      
+      const withdrawal = await prisma.withdrawal.findUnique({ where: { id }, include: { user: true } });
+      if (!withdrawal) return res.status(404).json({ error: "Withdrawal not found" });
+
+      if (status === "failed") {
+        // Refund
+        await prisma.user.update({
+          where: { id: withdrawal.userId },
+          data: { mainBalance: { increment: withdrawal.amount } }
+        });
+      }
+
+      const updated = await prisma.withdrawal.update({
+        where: { id },
+        data: { status, processedAt: status === "completed" ? new Date() : null }
+      });
+
+      await prisma.adminLog.create({
+        data: {
+          adminId,
+          action: `WITHDRAWAL_${status.toUpperCase()}`,
+          targetId: withdrawal.userId,
+          details: `Withdrawal ID: ${id}`
+        }
+      });
+
+      res.json(updated);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to update withdrawal status" });
+    }
+  });
+
+  app.get("/api/admin/deposits", adminAuth, async (req, res) => {
+    try {
+      const deposits = await prisma.depositScan.findMany({
+        include: { user: true },
+        orderBy: { scannedAt: 'desc' }
+      });
+      res.json(deposits);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch deposits" });
+    }
+  });
+
+  app.post("/api/admin/deposits/:id/assign", adminAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { telegramId, adminId } = req.body;
+      
+      const user = await prisma.user.findUnique({ where: { telegramId } });
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const deposit = await prisma.depositScan.findUnique({ where: { id } });
+      if (!deposit || deposit.status === 'credited') return res.status(400).json({ error: "Deposit already processed or not found" });
+
+      await prisma.$transaction([
+        prisma.depositScan.update({
+          where: { id },
+          data: { userId: user.id, status: 'credited', creditedAt: new Date() }
+        }),
+        prisma.user.update({
+          where: { id: user.id },
+          data: { mainBalance: { increment: deposit.amount }, totalDeposit: { increment: deposit.amount } }
+        }),
+        prisma.transaction.create({
+          data: {
+            userId: user.id,
+            type: "deposit",
+            amount: deposit.amount,
+            balanceType: "main",
+            reference: deposit.txHash
+          }
+        }),
+        prisma.adminLog.create({
+          data: {
+            adminId,
+            action: "ASSIGN_DEPOSIT",
+            targetId: user.id,
+            details: `Deposit ID: ${id}, Hash: ${deposit.txHash}`
+          }
+        })
+      ]);
+
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: "Failed to assign deposit" });
+    }
+  });
+
+  app.get("/api/admin/logs", adminAuth, async (req, res) => {
+    try {
+      const logs = await prisma.adminLog.findMany({
+        include: { admin: true },
+        orderBy: { createdAt: 'desc' },
+        take: 100
+      });
+      res.json(logs);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch logs" });
+    }
+  });
+
+  app.get("/api/admin/settings", adminAuth, async (req, res) => {
+    try {
+      const settings = await prisma.settings.findMany();
+      res.json(settings);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch settings" });
+    }
+  });
+
+  app.post("/api/admin/settings", adminAuth, async (req, res) => {
+    try {
+      const { key, value, adminId } = req.body;
+      const setting = await prisma.settings.upsert({
+        where: { key },
+        update: { value, updatedBy: adminId },
+        create: { key, value, updatedBy: adminId }
+      });
+
+      await prisma.adminLog.create({
+        data: {
+          adminId,
+          action: "UPDATE_SETTING",
+          details: `Key: ${key}, New Value: ${value}`
+        }
+      });
+
+      res.json(setting);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to update setting" });
     }
   });
 
@@ -502,10 +776,19 @@ async function startServer() {
     app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", async () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    initializeBots(io);
-    startDepositScanner();
+    try {
+      await initializeBots(io);
+    } catch (e) {
+      console.error("Failed to initialize bots (DB Connection Error?):", e);
+    }
+    
+    try {
+      startDepositScanner();
+    } catch (e) {
+      console.error("Failed to start deposit scanner:", e);
+    }
   });
 }
 

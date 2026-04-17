@@ -34,12 +34,37 @@ model User {
   
   depositAddress     String?       @unique  // Alamat TON pengguna yang terdaftar (untuk withdraw)
   
+  isBanned           Boolean       @default(false)
+  bannedAt           DateTime?
+  bannedReason       String?
+
   withdrawals        Withdrawal[]
   transactions       Transaction[]
   gameParticipations GameParticipant[]
   soloGames          SoloGame[]
   tournamentEntries  TournamentParticipant[]
   scans              DepositScan[]
+  
+  adminLogs          AdminLog[]    @relation("AdminActions")
+  updatedSettings    Settings[]    @relation("SettingsUpdated")
+}
+
+model AdminLog {
+  id        String   @id @default(cuid())
+  adminId   String
+  action    String   // "BAN_USER", "ADJUST_BALANCE", "APPROVE_WITHDRAWAL", dll.
+  targetId  String?  // ID user yang menjadi target (opsional)
+  details   String?  // JSON atau teks detail perubahan
+  createdAt DateTime @default(now())
+  admin     User     @relation("AdminActions", fields: [adminId], references: [id])
+}
+
+model Settings {
+  key       String   @id
+  value     String   // Simpan sebagai JSON atau string
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+  admin     User?    @relation("SettingsUpdated", fields: [updatedBy], references: [id])
 }
 
 model Withdrawal {
